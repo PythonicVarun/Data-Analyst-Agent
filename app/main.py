@@ -383,9 +383,9 @@ async def process_request(request: Request):
 
         if isinstance(result, dict) and "error" in result:
             logger.warning(
-                "Primary orchestrator returned an error payload; attempting backup fallback (no wait)..."
+                "Primary orchestrator returned an error payload; attempting backup fallback..."
             )
-            backup_res = backup_job.result(timeout=0)
+            backup_res = backup_job.result(timeout=max(start_time + TIME_LIMIT - time.time() - 5, 0))
             backup_fallback = (
                 _extract_backup_result(backup_res) if backup_res is not None else None
             )
@@ -393,8 +393,8 @@ async def process_request(request: Request):
                 logger.info("✅ Returning backup workflow result as fallback")
                 return JSONResponse(content=backup_fallback)
 
-            # If backup not ready/failed, try fake-response (no wait)
-            fake_res = fake_job.result(timeout=0)
+            # If backup not ready/failed, try fake-response
+            fake_res = fake_job.result(timeout=max(start_time + TIME_LIMIT - time.time(), 0))
             if fake_res is not None:
                 logger.info(
                     "✅ Returning fake-response workflow result as final fallback"
@@ -408,14 +408,14 @@ async def process_request(request: Request):
     except TimeoutException:
         elapsed_time = time.time() - start_time
         logger.error(
-            f"⏰ Primary request timed out after {elapsed_time:.2f} seconds; attempting backup fallback (no wait)..."
+            f"⏰ Primary request timed out after {elapsed_time:.2f} seconds; attempting backup fallback..."
         )
         try:
             backup_job  # type: ignore  # noqa: F401
         except NameError:
             raise HTTPException(status_code=504, detail="Request timed out")
 
-        backup_res = backup_job.result(timeout=0)
+        backup_res = backup_job.result(timeout=max(start_time + TIME_LIMIT - time.time() - 5, 0))
         backup_fallback = (
             _extract_backup_result(backup_res) if backup_res is not None else None
         )
@@ -425,7 +425,7 @@ async def process_request(request: Request):
 
         try:
             fake_job  # type: ignore  # noqa: F401
-            fake_res = fake_job.result(timeout=0)
+            fake_res = fake_job.result(timeout=max(start_time + TIME_LIMIT - time.time(), 0))
             if fake_res is not None:
                 logger.info(
                     "✅ Returning fake-response workflow result after primary timeout"
@@ -438,10 +438,10 @@ async def process_request(request: Request):
         elapsed_time = time.time() - start_time
         logger.error(f"💥 Primary error after {elapsed_time:.2f} seconds: {str(e)}")
         logger.exception("Full error traceback:")
-        # Attempt backup fallback (no wait) on generic errors as well
+        # Attempt backup fallback on generic errors as well
         try:
             backup_job  # type: ignore  # noqa: F401
-            backup_res = backup_job.result(timeout=0)
+            backup_res = backup_job.result(timeout=max(start_time + TIME_LIMIT - time.time() - 5, 0))
             backup_fallback = (
                 _extract_backup_result(backup_res) if backup_res is not None else None
             )
@@ -453,7 +453,7 @@ async def process_request(request: Request):
             # Try fake-response immediately
             try:
                 fake_job  # type: ignore  # noqa: F401
-                fake_res = fake_job.result(timeout=0)
+                fake_res = fake_job.result(timeout=max(start_time + TIME_LIMIT - time.time(), 0))
                 if fake_res is not None:
                     logger.info(
                         "✅ Returning fake-response workflow result after primary exception"
