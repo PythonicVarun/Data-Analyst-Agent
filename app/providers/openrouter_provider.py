@@ -1,8 +1,8 @@
 import os
-from typing import Any, Dict, List
-from openai import OpenAI
-from .base_provider import BaseLLMProvider
 import json
+from openai import OpenAI
+from typing import Any, Dict, List
+from .base_provider import BaseLLMProvider
 
 
 class OpenRouterProvider(BaseLLMProvider):
@@ -20,7 +20,7 @@ class OpenRouterProvider(BaseLLMProvider):
     def validate_config(self) -> bool:
         """Validate OpenRouter configuration"""
         api_key = self.config.get("api_key") or os.getenv("OPENROUTER_API_KEY")
-        if not api_key:
+        if api_key is None:
             self.log_error("OPENROUTER_API_KEY not found in environment or config")
             return False
         return True

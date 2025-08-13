@@ -15,11 +15,10 @@ MAX_TOKENS = 1500
 BASE_URL = os.getenv("FAKE_RESPONSE_OPENAI_BASE_URL", "https://api.openai.com/v1")
 OPENAI_API_KEY = os.getenv("FAKE_RESPONSE_OPENAI_API_KEY")
 MODEL = os.getenv("FAKE_RESPONSE_OPENAI_MODEL", "openai/gpt-4.1-nano")
-if not OPENAI_API_KEY:
+if OPENAI_API_KEY is None:
     print(
         "ERROR: Set FAKE_RESPONSE_OPENAI_API_KEY environment variable.", file=sys.stderr
     )
-    sys.exit(1)
 
 client = OpenAI(api_key=OPENAI_API_KEY, base_url=BASE_URL)
 

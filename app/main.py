@@ -93,6 +93,11 @@ except ValueError:
     )
     TIME_LIMIT = 280
 
+REMOVE_BASE64_PREFIX = os.getenv("REMOVE_BASE64_PREFIX", "true").lower() == "true"
+logger.info(f"Remove base64 prefix: {REMOVE_BASE64_PREFIX}")
+
+USE_ONLY_BACKUP_METHOD = os.getenv("USE_ONLY_BACKUP_METHOD", "false").lower() == "true"
+logger.info(f"Use only backup method: {USE_ONLY_BACKUP_METHOD}")
 
 # Regex to match base64 prefix
 BASE64_IMAGE_PREFIX_REGEX = re.compile(r"^data:image\/[a-zA-Z]+;base64,")
@@ -111,6 +116,8 @@ def recursive_clean(obj):
 @app.middleware("http")
 async def remove_base64_prefix_middleware(request: Request, call_next) -> Response:
     response = await call_next(request)
+    if not REMOVE_BASE64_PREFIX:
+        return response
 
     # don't touch compressed responses (gzip, br, etc.)
     if "content-encoding" in (k.lower() for k in response.headers.keys()):
@@ -464,10 +471,14 @@ async def process_request(request: Request):
         logger.info("🧵 Spawning fake-response workflow thread (non-blocking)...")
         fake_job = fake_orchestrator.start_async(question_text=question_content)
 
-        logger.info("🤖 Sending request to orchestrator (primary)...")
-        result = await orchestrator.handle_request(
-            question_content, start_time, TIME_LIMIT, timeout=TIME_LIMIT
-        )
+        if USE_ONLY_BACKUP_METHOD:
+            logger.info("🤖 Skiping request to orchestrator (primary)...")
+            result = "error: Env doesn't allow to use primary orchestrator."
+        else:
+            logger.info("🤖 Sending request to orchestrator (primary)...")
+            result = await orchestrator.handle_request(
+                question_content, start_time, TIME_LIMIT, timeout=TIME_LIMIT
+            )
 
         elapsed_time = time.time() - start_time
         logger.info(f"✅ Request completed successfully in {elapsed_time:.2f} seconds")
@@ -478,7 +489,7 @@ async def process_request(request: Request):
                 f"📤 Response length: {len(result) if isinstance(result, list) else len(str(result))} items/characters"
             )
 
-        if isinstance(result, dict) and "error" in result:
+        if (USE_ONLY_BACKUP_METHOD or isinstance(result, dict)) and "error" in result:
             logger.warning(
                 "Primary orchestrator returned an error payload; attempting backup fallback..."
             )

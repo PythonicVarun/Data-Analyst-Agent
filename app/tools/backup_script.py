@@ -23,12 +23,11 @@ except Exception:
 BASE_URL = os.getenv("BACKUP_RESPONSE_OPENAI_BASE_URL", "https://api.openai.com/v1")
 OPENAI_API_KEY = os.getenv("BACKUP_RESPONSE_OPENAI_API_KEY")
 MODEL = os.getenv("BACKUP_RESPONSE_OPENAI_MODEL", "openai/gpt-4.1-nano")
-if not OPENAI_API_KEY:
+if OPENAI_API_KEY is None:
     print(
         "ERROR: Set BACKUP_RESPONSE_OPENAI_API_KEY environment variable.",
         file=sys.stderr,
     )
-    sys.exit(1)
 
 LLM_TEMPERATURE = 0.0
 LLM_MAX_TOKENS = 4096
@@ -42,9 +41,10 @@ except ValueError:
     TOTAL_REQUEST_TIMEOUT = 280
 
 PHASE1_TIMEOUT = 30
-PHASE2_SINGLE_ATTEMPT_TIMEOUT = 120
+PHASE2_SINGLE_ATTEMPT_TIMEOUT = 150
 
-MAX_DEBUG_ATTEMPTS = 5
+PHASE1_MAX_ATTEMPTS = 3
+MAX_DEBUG_ATTEMPTS = 10
 
 USE_DOCKER = False
 DOCKER_IMAGE = "python:3.11-slim"
@@ -826,15 +826,33 @@ def run_full_workflow(base_dir: str = ".", use_temp_workspace: bool = True):
 
     # Phase 1
     questions_text = read_questions_file(os.path.join(workspace, "questions.txt"))
-    # print(os.path.join(workspace, "questions.txt"), questions_text)
-    try:
-        metadata = phase1_generate_and_run(
-            workspace, questions_text, elapsed_budget=remaining_budget
-        )
-    except Exception as e:
-        print("Phase1 failed:", e)
-        print("Artifacts saved at:", workspace)
-        return {"status": "phase1_failed", "error": str(e), "workspace": workspace}
+    metadata = None
+    phase1_attempts = 0
+    while phase1_attempts < PHASE1_MAX_ATTEMPTS:
+        phase1_attempts += 1
+        print(f"[Phase 1] attempt {phase1_attempts}/{PHASE1_MAX_ATTEMPTS}...")
+        try:
+            metadata = phase1_generate_and_run(
+                workspace, questions_text, elapsed_budget=remaining_budget
+            )
+            break  # Success
+        except Exception as e:
+            print(f"Phase1 attempt {phase1_attempts} failed: {e}")
+            if phase1_attempts >= PHASE1_MAX_ATTEMPTS:
+                print("Phase1 failed after all attempts.")
+                print("Artifacts saved at:", workspace)
+                return {
+                    "status": "phase1_failed",
+                    "error": str(e),
+                    "workspace": workspace,
+                }
+
+    if metadata is None:
+        return {
+            "status": "phase1_failed",
+            "error": "Phase 1 failed to produce metadata after multiple attempts.",
+            "workspace": workspace,
+        }
 
     # update remaining budget
     elapsed = time.time() - start_time
