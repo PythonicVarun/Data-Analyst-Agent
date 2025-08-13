@@ -905,4 +905,3 @@ if __name__ == "__main__":
         print(json.dumps(result, indent=2))
     except Exception as exc:
         print("Fatal error during workflow:", exc, file=sys.stderr)
-        sys.exit(1)

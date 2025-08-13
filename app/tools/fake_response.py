@@ -77,7 +77,7 @@ def call_llm(prompt: str) -> str:
 def main(questions_path: str):
     if not os.path.exists(questions_path):
         print(f"ERROR: {questions_path} not found.", file=sys.stderr)
-        sys.exit(2)
+        return
 
     with open(questions_path, "r", encoding="utf-8") as f:
         questions_text = f.read()

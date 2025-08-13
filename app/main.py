@@ -1,12 +1,14 @@
-import uvicorn
-import time
 import os
+import re
+import json
+import time
 import uuid
 import shutil
 import logging
-from fastapi.responses import HTMLResponse, JSONResponse
+import uvicorn
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Request, Response
 
 from dotenv import load_dotenv
 
@@ -90,6 +92,101 @@ except ValueError:
         f"Invalid REQUEST_TIMEOUT value: {TIME_LIMIT}, defaulting to 280 seconds"
     )
     TIME_LIMIT = 280
+
+
+# Regex to match base64 prefix
+BASE64_IMAGE_PREFIX_REGEX = re.compile(r"^data:image\/[a-zA-Z]+;base64,")
+
+
+def recursive_clean(obj):
+    if isinstance(obj, dict):
+        return {k: recursive_clean(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [recursive_clean(v) for v in obj]
+    if isinstance(obj, str):
+        return BASE64_IMAGE_PREFIX_REGEX.sub("", obj)
+    return obj
+
+
+@app.middleware("http")
+async def remove_base64_prefix_middleware(request: Request, call_next) -> Response:
+    response = await call_next(request)
+
+    # don't touch compressed responses (gzip, br, etc.)
+    if "content-encoding" in (k.lower() for k in response.headers.keys()):
+        return response
+
+    content_type = response.headers.get("content-type", "").lower()
+
+    body = b""
+    try:
+        async for chunk in response.body_iterator:
+            body += chunk
+    except Exception:
+        pass
+
+    if not body and hasattr(response, "body") and response.body is not None:
+        if isinstance(response.body, (bytes, bytearray)):
+            body = bytes(response.body)
+        elif isinstance(response.body, str):
+            body = response.body.encode("utf-8")
+        else:
+            # attempt best-effort serialization
+            try:
+                body = json.dumps(response.body, ensure_ascii=False).encode("utf-8")
+            except Exception:
+                body = b""
+
+    if not body:
+        return response
+
+    def build_response(new_bytes: bytes) -> Response:
+        headers = dict(response.headers)
+        headers["content-length"] = str(len(new_bytes))
+        media_type = (
+            getattr(response, "media_type", None) or content_type.split(";")[0] or None
+        )
+        return Response(
+            content=new_bytes,
+            status_code=response.status_code,
+            headers=headers,
+            media_type=media_type,
+        )
+
+    if "application/json" in content_type:
+        try:
+            parsed = json.loads(body)
+        except Exception:
+            parsed = None
+
+        if parsed is not None:
+            cleaned = recursive_clean(parsed)
+            new_body_bytes = json.dumps(cleaned, ensure_ascii=False).encode("utf-8")
+            return build_response(new_body_bytes)
+
+    if (
+        content_type.startswith("text/")
+        or content_type == ""
+        or "application/javascript" in content_type
+    ):
+        charset = "utf-8"
+        if "charset=" in content_type:
+            try:
+                charset = content_type.split("charset=")[-1].split(";")[0].strip()
+            except Exception:
+                charset = "utf-8"
+
+        try:
+            text = body.decode(charset, errors="replace")
+        except Exception:
+            return response
+
+        if BASE64_IMAGE_PREFIX_REGEX.match(text.strip()):
+            new_text = BASE64_IMAGE_PREFIX_REGEX.sub("", text, count=1)
+            new_bytes = new_text.encode(charset)
+            return build_response(new_bytes)
+
+    return build_response(body)
 
 
 @app.on_event("startup")
@@ -385,7 +482,9 @@ async def process_request(request: Request):
             logger.warning(
                 "Primary orchestrator returned an error payload; attempting backup fallback..."
             )
-            backup_res = backup_job.result(timeout=max(start_time + TIME_LIMIT - time.time() - 5, 0))
+            backup_res = backup_job.result(
+                timeout=max(start_time + TIME_LIMIT - time.time() - 5, 0)
+            )
             backup_fallback = (
                 _extract_backup_result(backup_res) if backup_res is not None else None
             )
@@ -394,7 +493,9 @@ async def process_request(request: Request):
                 return JSONResponse(content=backup_fallback)
 
             # If backup not ready/failed, try fake-response
-            fake_res = fake_job.result(timeout=max(start_time + TIME_LIMIT - time.time(), 0))
+            fake_res = fake_job.result(
+                timeout=max(start_time + TIME_LIMIT - time.time(), 0)
+            )
             if fake_res is not None:
                 logger.info(
                     "✅ Returning fake-response workflow result as final fallback"
@@ -415,7 +516,9 @@ async def process_request(request: Request):
         except NameError:
             raise HTTPException(status_code=504, detail="Request timed out")
 
-        backup_res = backup_job.result(timeout=max(start_time + TIME_LIMIT - time.time() - 5, 0))
+        backup_res = backup_job.result(
+            timeout=max(start_time + TIME_LIMIT - time.time() - 5, 0)
+        )
         backup_fallback = (
             _extract_backup_result(backup_res) if backup_res is not None else None
         )
@@ -425,7 +528,9 @@ async def process_request(request: Request):
 
         try:
             fake_job  # type: ignore  # noqa: F401
-            fake_res = fake_job.result(timeout=max(start_time + TIME_LIMIT - time.time(), 0))
+            fake_res = fake_job.result(
+                timeout=max(start_time + TIME_LIMIT - time.time(), 0)
+            )
             if fake_res is not None:
                 logger.info(
                     "✅ Returning fake-response workflow result after primary timeout"
@@ -441,7 +546,9 @@ async def process_request(request: Request):
         # Attempt backup fallback on generic errors as well
         try:
             backup_job  # type: ignore  # noqa: F401
-            backup_res = backup_job.result(timeout=max(start_time + TIME_LIMIT - time.time() - 5, 0))
+            backup_res = backup_job.result(
+                timeout=max(start_time + TIME_LIMIT - time.time() - 5, 0)
+            )
             backup_fallback = (
                 _extract_backup_result(backup_res) if backup_res is not None else None
             )
@@ -453,7 +560,9 @@ async def process_request(request: Request):
             # Try fake-response immediately
             try:
                 fake_job  # type: ignore  # noqa: F401
-                fake_res = fake_job.result(timeout=max(start_time + TIME_LIMIT - time.time(), 0))
+                fake_res = fake_job.result(
+                    timeout=max(start_time + TIME_LIMIT - time.time(), 0)
+                )
                 if fake_res is not None:
                     logger.info(
                         "✅ Returning fake-response workflow result after primary exception"

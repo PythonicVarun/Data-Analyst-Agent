@@ -13,7 +13,6 @@ logger = logging.getLogger(__name__)
 
 from app.providers import ProviderFactory
 
-from app.tools.utils import encode_image_base64
 from app.tools.parser import fetch_and_parse_html
 from app.sandbox.sandbox_runner import SandboxRunner
 from app.tools.python_runner import run_python_with_uv, run_python_with_packages
